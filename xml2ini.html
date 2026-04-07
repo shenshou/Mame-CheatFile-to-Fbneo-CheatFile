@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>MAME XML → FBNeo 全格式万能转换器</title>
+<style>
+body{background:#111;color:#fff;padding:2rem;font-family:Arial}
+textarea{width:100%;height:300px;background:#222;color:#fff;border:1px solid #666;padding:10px;margin:10px 0;border-radius: 5px;}
+button{padding:10px 20px;background:#0077cc;color:#fff;border:none;cursor:pointer;margin-right:8px;border-radius: 6px;}
+</style>
+</head>
+<body>
+<h2>MAME XML → FBNeo INI 全格式万能版</h2>
+
+<textarea id="input" placeholder="输入任意MAME XML"></textarea>
+<button onclick="convert()">转换</button>
+<button onclick="copyOutput()">复制输出内容</button>
+<button onclick="input.value='';output.value=''">清空全部</button>
+<button onclick="input.value=''">清空输入</button>
+<button onclick="output.value=''">清空输出</button>
+<button onclick="removeP234FromInput()">删除输入中的P2/P3/P4</button>
+<button onclick="removeP234FromOutput()">删除输出中的P2/P3/P4</button>
+<textarea id="output" readonly placeholder="输出完美INI"></textarea>
+
+<script>
+function convert() {
+    const xml = document.getElementById('input').value;
+    let output = '';
+
+    const cheats = xml.split(/<cheat\s/).filter(c => c.includes('</cheat>'));
+
+    for (let ch of cheats) {
+        const name = (ch.match(/desc="([^"]+)"/) || [])[1] || '';
+        if (!name) continue;
+
+        // 提取 items（适配你所有自定义格式：0x01→01, 0x10→10）
+        const items = [];
+        const itemRe = /<item value="0x([0-9a-fA-F]+)">([^<]+)<\/item>/g;
+        let m;
+        while ((m = itemRe.exec(ch))) {
+            const key = m[1];
+            items.push({ key, label: m[2].trim() });
+        }
+
+        // ==============================================
+        // 1. 匹配直接赋值 =param 格式（选择大关）
+        // ==============================================
+        const directMatch = ch.match(/maincpu\.([pbw]+)@([0-9a-fA-F]+)=param/i);
+        let directAddr = null;
+        if (directMatch) {
+            directAddr = directMatch[2].toUpperCase();
+        }
+
+        // ==============================================
+        // 2. 匹配 condition 格式（衣服/武将/阵法）
+        // ==============================================
+        const condMap = {};
+        const actionRe = /condition="\(param==(\w+)\)"[^<]*maincpu[^@]+@([0-9a-fA-F]+)=([0-9a-fA-F]+)/gi;
+        while ((m = actionRe.exec(ch))) {
+            const key = m[1];
+            const addr = m[2].toUpperCase();
+            const val = m[3].toUpperCase();
+            if (!condMap[key]) condMap[key] = [];
+            condMap[key].push(`0, 0x${addr}, 0x${val}`);
+        }
+
+        // ==============================================
+        // 3. 普通无参数作弊
+        // ==============================================
+        const simpleActions = [];
+        if (items.length === 0 && !directAddr) {
+            const simpleRe = /maincpu[^@]+@([0-9a-fA-F]+)=([0-9a-fA-F]+)/gi;
+            let sm;
+            while ((sm = simpleRe.exec(ch))) {
+                simpleActions.push(`0, 0x${sm[1].toUpperCase()}, 0x${sm[2].toUpperCase()}`);
+            }
+        }
+
+        // 输出
+        output += `cheat "${name}"\n`;
+        output += `default 0\n`;
+        output += `0 "Disabled"\n`;
+
+        if (items.length > 0) {
+            items.forEach((it, idx) => {
+                let line = "";
+                // 优先用 condition
+                if (condMap[it.key]) {
+                    line = condMap[it.key].join(', ');
+                }
+                // 没有 condition，用直接赋值 =param
+                else if (directAddr) {
+                    line = `0, 0x${directAddr}, 0x${it.key}`;
+                }
+                output += `${idx+1} "${it.label}", ${line}\n`;
+            });
+        } else if (simpleActions.length > 0) {
+            output += `1 "Enabled", ${simpleActions.join(', ')}\n`;
+        }
+
+        output += "\n";
+    }
+
+    document.getElementById('output').value = output.trim();
+}
+// 删除输入里的 P2 / P3 / P4 整段 cheat
+function removeP234FromInput() {
+    let text = document.getElementById('input').value;
+
+    // 按 </cheat> 拆分每一条作弊
+    let cheats = text.split('</cheat>');
+    let result = [];
+
+    for (let part of cheats) {
+        // 不包含 P2/P3/P4 才保留
+        if (!part.match(/P2|P3|P4/gi)) {
+            result.push(part);
+        }
+    }
+
+    // 重新拼回去
+    document.getElementById('input').value = result.join('</cheat>')
+        .replace(/<cheat\s*$/i, '')
+        .replace(/\n\s*\n/g, '\n')
+        .trim();
+}
+
+// 删除输出里以 cheat "xxxP2" / "P3" / "P4" 开头的段落
+function removeP234FromOutput() {
+    let txt = document.getElementById('output').value;
+    const blocks = txt.split(/\n\s*\n/);
+    const filtered = blocks.filter(b => {
+        return !b.match(/^cheat\s*"[^"]*(P2|P3|P4)/i);
+    });
+    document.getElementById('output').value = filtered.join('\n\n').trim();
+}
+// 复制输出内容
+function copyOutput() {
+    const output = document.getElementById('output');
+    output.select();
+    document.execCommand('copy');
+}
+</script>
+</body>
+</html>
